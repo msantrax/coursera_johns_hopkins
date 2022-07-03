@@ -1,4 +1,4 @@
-## Welcome to Coursera Johns Hopkins : Data Science:Statistics and Machine Learning Specialization
+## Welcome to the Sandbox of Coursera - Johns Hopkins courses. 
 
 You can use the [editor on GitHub](https://github.com/msantrax/coursera_johns_hopkins/edit/main/docs/index.md) to maintain and preview the content for your website in Markdown files.
 
