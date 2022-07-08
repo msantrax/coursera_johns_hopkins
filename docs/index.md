@@ -2,7 +2,7 @@
 
 This Landpage is under construction and presently you will find the report to the peer-graded assignment in this link 
 
-[]: https://github.com/msantrax/coursera_johns_hopkins/blob/main/PracticalML/pml_asgn.html	"Link to report"
+[https://github.com/msantrax/coursera_johns_hopkins/blob/main/PracticalML/pml_asgn.html](Link to report): 
 
  
 
