@@ -1,0 +1,477 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Marcos A. Santos"
+date: '2022-07-04'
+output:
+  pdf_document: 
+    latex_engine: pdflatex
+  html_document:
+    df_print: paged
+mainfont: Arial
+geometry: left = 1cm, right = 1cm, top = 1cm, bottom = 1cm
+---
+
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(message=FALSE,
+tidy.opts=list(width.cutoff=60))
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Overview**
+The task developed in this document is for the completion of the Practical Machine Learning Course Assignment, part of Coursera’s Data Science Certification by Johns Hopkins University.
+
+#### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+#### Requested demonstrations and actions
+
+1. The main objective is to predict how correct, on a scale of 5 levels, one would perform a given exercise by observing data from the devices described above using prior training data.
+2. Create a report explaining how the model was built and why a certain technique was chosen to do it.
+3. Use the model to predict 20 test cases and submit the results to the automated grading.
+4. Create a Github repo and upload a compiled HTML file and a R Markdown of the report. Constrain the text to a maximum of 2000 words and 5 figures.
+
+#### Given conditions || assumptions
+1. The data for training and testing are pre-determined.
+2. There is no or little prior knowledge of the specific theory about the inner workings of the process.
+3. The EDA phase is allowed to normalize and judge all training features.
+4. There is no limitation on the needed processing power for the training nor the maximum latency to predict.
+5. It should be used the techniques taught in classes.
+
+
+```{r echo=FALSE}
+# Load the needed libraries 
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(corrplot)
+library(randomForest)
+
+# Normalize stats random
+set.seed(88570)
+
+# Load the work data locally
+training_raw <- read.csv("pml-training.csv")
+testing_raw <- read.csv("pml-testing.csv")
+```
+
+### **Task 1 - Load the needed libraries and work data**  
+The following environment was chosen to accomplish the objective: RStudio 2022.02.1 Build 461, R version 4.0.4 (2021-02-15), caret 6.0.92, rpart 4.1.15, rpart.plot 3.1.1, corrplot 0.92, randomForest 4.6.14.
+
+The random seed used to reference our stats was set to **88570**
+
+The traning and test data used in this project are available at 
+[<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and [<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) respectively and kindly provided by: [<http://groupware.les.inf.puc-rio.br/har>](http://groupware.les.inf.puc-rio.br/har).
+The loaded dataframes have the following structure :
+
+| Dataframe     | Num. of Observations| Num. of Variables  |
+|:--------------|:-------------------:|:------------------:|
+| training_raw  | `r dim(training_raw)[1]`| `r dim(training_raw)[2]`|
+| testing_raw   | `r dim(testing_raw)[1]` | `r dim(testing_raw)[2]` |
+
+The target to predict is the variable `classe`.
+
+### **Task 2 - Feature Engineering**
+
+First, by observing the test dataframe we may find columns that are empty so it's safe to remove them. This reduced our variables amount to : 
+
+
+```{r echo=FALSE}
+# Clean empty features
+emptymap <- (colSums(is.na(testing_raw)) == 0)
+training_clean <- training_raw[, emptymap]
+testing_clean <- testing_raw[, emptymap]
+rm(emptymap)
+```
+
+| Dataframe     | Num. of Observations| Num. of Variables  |
+|:--------------|:-------------------:|:------------------:|
+| training_clean  | `r dim(training_clean)[1]`| `r dim(training_clean)[2]`|
+| testing_clean   | `r dim(testing_clean)[1]` | `r dim(testing_clean)[2]` |
+
+Now, assuming that we are using only the sensors data to learn, let's remove other non relevant columns to reduce noise (index, user name and temporal references), this will bring our variables to :
+
+```{r echo=FALSE}
+# Clean empty features
+dropregex <- grepl("^X|timestamp|user_name", names(training_clean))
+training_clean <- training_clean[, !dropregex]
+testing_clean <- testing_clean[, !dropregex]
+rm(dropregex)
+```
+
+| Dataframe     | Num. of Observations| Num. of Variables  |
+|:--------------|:-------------------:|:------------------:|
+| training_clean  | `r dim(training_clean)[1]`| `r dim(training_clean)[2]`|
+| testing_clean   | `r dim(testing_clean)[1]` | `r dim(testing_clean)[2]` |
+
+The target variable `classe` is originally of type character. Let's change to a factor in order to easy our model and cross validation algorithms .
+
+```{r echo=FALSE}
+# Clean empty features
+training_clean$classe <- factor(training_clean$classe)
+summary(training_clean$classe)
+```
+
+### **Task 3 - EDA**
+
+Is there any noticeable correlations with our target variable `classe` ? - What `stats cor` can tell us ?
+
+
+```{r echo=FALSE}
+# Detect correlation with target
+training_corr <- data.frame(data.matrix(training_clean))
+classe_idx <- which(names(training_corr) == "classe")
+correlations <- cor(training_corr[, -classe_idx], as.numeric(training_corr$classe))
+best_correlations <- subset(as.data.frame(as.table(correlations)), abs(Freq)>0.25)
+best_correlations
+```
+
+Hard to tell there is a strong one, the best one is close to 0.30. Now let's take a look on the overall features correlation :
+
+```{r echo=FALSE}
+# Detect correlation among features
+corrplot(
+  cor(training_corr[, -length(names(training_clean))]),
+  method = "square",
+  type = "lower",
+  order = "hclust",
+  tl.col = "black",
+  tl.cex = 0.4,
+  col = colorRampPalette(c("purple", "dark green"))(200)
+)
+```
+
+It looks like some features are quite correlated with each other. We may try to reduce them by PCA should we need help due that our final result doesn't meet the specifications or we have time and resources to do some research in order to improve performance. For now, we're restricted to 2000 words.
+
+### **Task 3 - Implementation Setup - Partitioning**
+
+Since the test set is reserved to the ultimate verification, we will extract the validation set from the training. The split will be the common 3/4. Therefore we will end up with the following sets:
+
+```{r echo=FALSE}
+# Create the validation set
+inTrain <- createDataPartition(training_clean$classe, p = 3/4, list = FALSE)
+validation <- training_clean[-inTrain, ]
+training <- training_clean[inTrain, ]
+```
+
+| Dataframe     | Num. of Observations|
+|:--------------|:-------------------:|
+| training   | `r dim(training)[1]`|
+| validation | `r dim(validation)[1]` | 
+| test       | `r dim(testing_clean)[1]` |
+
+## **Data Modelling**
+
+### **Task 4 - Baseline Approach -> Decision Tree**
+
+Since we're trying to classify the exercises, the obvious baseline algorithm is the **Decision Tree** and here is the structure he found :
+
+```{r echo=FALSE}
+# Model by Decision Tree
+start <- proc.time()
+model_dtree <- rpart(classe ~ ., data = training, method = "class")
+prp(model_dtree)
+model_dtree_time = proc.time() - start
+model_dtree_time = model_dtree_time[3]
+```
+
+Now, the performance evaluation using the validation set gives us the following figures:
+
+```{r echo=FALSE}
+# Evaluate the decision tree
+start <- proc.time()
+predict_dtree <- predict(model_dtree, validation, type = "class")
+confusionMatrix(validation$classe, predict_dtree)
+predict_dtree_time = proc.time() - start
+predict_dtree_time = predict_dtree_time[3]
+```
+
+Looks like there is a big room to improvement. Let's register some parameters to further benchmarks:
+
+```{r echo=FALSE}
+# Get the accuracy and estimated out-of-sample
+dtree_accuracy <- postResample(predict_dtree, validation$classe)
+dtree_accuracy <- sprintf("%6.2f %%", dtree_accuracy[1]*100)
+dtree_ose <- 1 - as.numeric(confusionMatrix(validation$classe, predict_dtree)$overall[1])
+dtree_ose <- sprintf("%6.2f %%", dtree_ose*100)
+```
+
+| Performance Gauge         | Result              |
+|:--------------------------|:-------------------:|
+| Accuracy                  | `r dtree_accuracy`|
+| Out-of_Sample Error (est) | `r dtree_ose` |
+| Time to train             | `r model_dtree_time` sec.   |
+| Latency to predict        | `r predict_dtree_time` sec. |
+
+
+### **Task 5 - Improving the trees -> Random Forest**
+
+The **Random Forrest** algorithm in R using a **5-Fold cross validation** is knew to perform well due his best procedures to manage outliers and the automatic selection of variables, so we should get better results. It would be informative to benchmark the procedures with number of trees around 50 just to see how would be if working in dynamic industrial control environments (process response is a real concern). For brevity here let's do only for 10 and 100 trees.  Here are the models :
+
+
+`For 100 trees :`
+
+```{r echo=FALSE}
+## Edition stub - load a pre-processed model from archived file
+model_rf100 <- readRDS("rf_100.rds")
+modeling_time100 = c(309.021, 0.670, 310.214, 0, 0)
+
+# Generate the Random Forrest Model
+# start <- proc.time()
+# model_rf100 <- train(classe ~ ., data = training, method = "rf", trControl = trainControl(method = "cv", 5), ntree = 100)
+
+modeling_time100 = modeling_time100[3]
+model_rf100
+
+start <- proc.time()
+predict_rf100 <- predict(model_rf100, validation)
+confusionMatrix(validation$classe, predict_rf100)
+predicting_time100 = proc.time() - start
+predicting_time100 = predicting_time100[3]
+
+# Get the accuracy and estimated out-of-sample
+rf100_accuracy <- postResample(predict_rf100, validation$classe)
+rf100_accuracy <- sprintf("%6.2f %%", rf100_accuracy[1]*100)
+rf100_ose <- 1 - as.numeric(confusionMatrix(validation$classe, predict_rf100)$overall[1])
+rf100_ose <- sprintf("%6.2f %%", rf100_ose*100)
+```
+
+`And for only 10 trees :`
+
+```{r echo=FALSE}
+## Edition stub - load a pre-processed model from archived file
+model_rf10 <- readRDS("rf_10.rds")
+modeling_time10 = c(36.869, 0.240, 37.180, 0, 0)
+
+# Generate the Random Forrest Model
+# start <- proc.time()
+# model_rf100 <- train(classe ~ ., data = training, method = "rf", trControl = trainControl(method = "cv", 5), ntree = 100)
+
+modeling_time10 = modeling_time10[3]
+model_rf10
+
+start <- proc.time()
+predict_rf10 <- predict(model_rf10, validation)
+confusionMatrix(validation$classe, predict_rf10)
+predicting_time10 = proc.time() - start
+predicting_time10 = predicting_time10[3]
+
+# Get the accuracy and estimated out-of-sample
+rf10_accuracy <- postResample(predict_rf10, validation$classe)
+rf10_accuracy <- sprintf("%6.2f %%", rf10_accuracy[1]*100)
+rf10_ose <- 1 - as.numeric(confusionMatrix(validation$classe, predict_rf10)$overall[1])
+rf10_ose <- sprintf("%6.2f %%", rf10_ose*100)
+```
+
+`Here are some important values to shed some light :`  
+
+| Performance Gauge         | 10 trees              | 100 trees              |
+|:--------------------------|:---------------------:|:---------------------:|
+| Accuracy @ mtry           | `r rf10_accuracy`     | `r rf100_accuracy`     |
+| Out-of_Sample Error (est) | `r rf10_ose`          | `r rf100_ose`          | 
+| Time to train             | `r modeling_time10` sec.   | `r modeling_time100` sec.  |
+| Latency to predict        | `r predicting_time10` sec. | `r predicting_time100` sec. |
+
+The Random Forrest produced models that are at first glance doing a good job on predicting the exercises. There is no concerns about accuracy and we will probably get a good AUC (not shown, again we should restrict to 2000 words) 
+
+However, the model with 100 trees is useless on control loops (training of more than 300 sec is too long and latency of 600ms is barely enough in most of the systems). The model with 10 trees performs better on latency than a single decision tree and is somehow acceptable with his 90 ms. His training time can be upgraded by maybe using what was suggested in the EDA phase (reducing the dimension of the correlated x,y,z accelerometers axes by PCA and therefore the number of features) but this has to be based on knowledge of the sensors intrinsics.  
+
+
+### **Task 6 - Predictions from Test Data**
+
+Here are the results that our model predicted from the provided 20 samples:  
+
+
+```{r echo=FALSE}
+# Show the results obtained by prediction over test data
+pred_test = predict(model_rf100, testing_clean[, -length(names(testing_clean))])
+n = length(pred_test)
+for(i in 1:n){
+  filename = paste0("Assignment/test_",i,".txt")
+  write.table(pred_test[i], 
+              file = filename, 
+              quote = FALSE, 
+              row.names = FALSE, 
+              col.names = FALSE)
+}
+
+pred_test
+```
+
+The 20 files with result for each question of the assignment are available at 
+[<https://github.com/msantrax/coursera_johns_hopkins/blob/main/docs/index.md>](https://github.com/msantrax/coursera_johns_hopkins/blob/main/docs/index.md)
+
+
+## References :
+
+
+
+\pagebreak
+
+# APPENDIX - CODE
+
+
+```{r eval=FALSE}
+# Load the needed libraries 
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(corrplot)
+library(randomForest)
+
+# Normalize stats random
+set.seed(88570)
+
+# Load the work data locally
+training_raw <- read.csv("pml-training.csv")
+testing_raw <- read.csv("pml-testing.csv")
+```
+
+```{r eval=FALSE}
+# Clean empty features
+emptymap <- (colSums(is.na(testing_raw)) == 0)
+training_clean <- training_raw[, emptymap]
+testing_clean <- testing_raw[, emptymap]
+rm(emptymap)
+```
+
+```{r eval=FALSE}
+# Clean empty features
+training_clean$classe <- factor(training_clean$classe)
+summary(training_clean$classe)
+```
+
+```{r eval=FALSE}
+# Detect correlation with target
+training_corr <- data.frame(data.matrix(training_clean))
+classe_idx <- which(names(training_corr) == "classe")
+correlations <- cor(training_corr[, -classe_idx], as.numeric(training_corr$classe))
+best_correlations <- subset(as.data.frame(as.table(correlations)), abs(Freq)>0.25)
+best_correlations
+```
+
+```{r eval=FALSE}
+# Detect correlation among features
+corrplot(
+  cor(training_corr[, -length(names(training_clean))]),
+  method = "square",
+  type = "lower",
+  order = "hclust",
+  tl.col = "black",
+  tl.cex = 0.4,
+  col = colorRampPalette(c("purple", "dark green"))(200)
+)
+```
+
+```{r eval=FALSE}
+# Create the validation set
+inTrain <- createDataPartition(training_clean$classe, p = 3/4, list = FALSE)
+validation <- training_clean[-inTrain, ]
+training <- training_clean[inTrain, ]
+```
+
+```{r eval=FALSE}
+# Model by Decision Tree
+start <- proc.time()
+model_dtree <- rpart(classe ~ ., data = training, method = "class")
+prp(model_dtree)
+model_dtree_time = proc.time() - start
+model_dtree_time = model_dtree_time[3]
+```
+
+```{r eval=FALSE}
+# Evaluate the decision tree
+start <- proc.time()
+predict_dtree <- predict(model_dtree, validation, type = "class")
+confusionMatrix(validation$classe, predict_dtree)
+predict_dtree_time = proc.time() - start
+predict_dtree_time = predict_dtree_time[3]
+```
+
+```{r eval=FALSE}
+# Get the accuracy and estimated out-of-sample
+dtree_accuracy <- postResample(predict_dtree, validation$classe)
+dtree_accuracy <- sprintf("%6.2f %%", dtree_accuracy[1]*100)
+dtree_ose <- 1 - as.numeric(confusionMatrix(validation$classe, predict_dtree)$overall[1])
+dtree_ose <- sprintf("%6.2f %%", dtree_ose*100)
+```
+
+
+```{r eval=FALSE}
+## Edition stub - load a pre-processed model from archived file
+model_rf100 <- readRDS("rf_100.rds")
+modeling_time100 = c(309.021, 0.670, 310.214, 0, 0)
+
+# Generate the Random Forrest Model
+# start <- proc.time()
+# model_rf100 <- train(classe ~ ., data = training, method = "rf", trControl = trainControl(method = "cv", 5), ntree = 100)
+
+modeling_time100 = modeling_time100[3]
+model_rf100
+
+start <- proc.time()
+predict_rf100 <- predict(model_rf100, validation)
+confusionMatrix(validation$classe, predict_rf100)
+predicting_time100 = proc.time() - start
+predicting_time100 = predicting_time100[3]
+
+# Get the accuracy and estimated out-of-sample
+rf100_accuracy <- postResample(predict_rf100, validation$classe)
+rf100_accuracy <- sprintf("%6.2f %%", rf100_accuracy[1]*100)
+rf100_ose <- 1 - as.numeric(confusionMatrix(validation$classe, predict_rf100)$overall[1])
+rf100_ose <- sprintf("%6.2f %%", rf100_ose*100)
+```
+
+```{r eval=FALSE}
+## Edition stub - load a pre-processed model from archived file
+model_rf10 <- readRDS("rf_10.rds")
+modeling_time10 = c(36.869, 0.240, 37.180, 0, 0)
+
+# Generate the Random Forrest Model
+# start <- proc.time()
+# model_rf100 <- train(classe ~ ., data = training, method = "rf", trControl = trainControl(method = "cv", 5), ntree = 100)
+
+modeling_time10 = modeling_time10[3]
+model_rf10
+
+start <- proc.time()
+predict_rf10 <- predict(model_rf10, validation)
+confusionMatrix(validation$classe, predict_rf10)
+predicting_time10 = proc.time() - start
+predicting_time10 = predicting_time10[3]
+
+# Get the accuracy and estimated out-of-sample
+rf10_accuracy <- postResample(predict_rf10, validation$classe)
+rf10_accuracy <- sprintf("%6.2f %%", rf10_accuracy[1]*100)
+rf10_ose <- 1 - as.numeric(confusionMatrix(validation$classe, predict_rf10)$overall[1])
+rf10_ose <- sprintf("%6.2f %%", rf10_ose*100)
+```
+
+```{r eval=FALSE}
+# Show the results obtained by prediction over test data
+pred_test = predict(model_rf100, testing_clean[, -length(names(testing_clean))])
+n = length(pred_test)
+for(i in 1:n){
+  filename = paste0("Assignment/test_",i,".txt")
+  write.table(pred_test[i], 
+              file = filename, 
+              quote = FALSE, 
+              row.names = FALSE, 
+              col.names = FALSE)
+}
+
+pred_test
+```
+
+
+
+
+
+
+
+
